@@ -200,3 +200,96 @@ spark.udf.register('getCustomerType', getCustomerType)
 # MAGIC 
 # MAGIC </script>
 # MAGIC   """)
+
+# COMMAND ----------
+
+import requests
+
+# COMMAND ----------
+
+endpoint = "https://iomegatextanalytics.cognitiveservices.azure.com"
+sentiment_uri = endpoint + "/text/analytics/v2.1/sentiment"
+headers ={"Ocp-Apim-Subscription-Key":"5fcfee9179de48e3b08d70fe36b3aa6d"}
+
+# COMMAND ----------
+
+def get_score(text):
+  documents = {'documents' : [
+            {'id': 1, 'language': 'en', 'text': text},
+            ]}
+  response  = requests.post(sentiment_uri, headers=headers, json=documents)
+  azure_response = response.json()
+  azure_score = 0
+
+  try:
+    azure_documents = azure_response['documents']
+    azure_score = azure_documents[0]['score']
+  except:
+    azure_score = -1
+
+  return azure_score
+
+# COMMAND ----------
+
+spark.udf.register('get_score', get_score)
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC 
+# MAGIC SELECT o.orderid, o.orderdate, c.fullname, c.address, getCustomerType(c.credit) as customertype, c.status,
+# MAGIC   p.title as ProductTitle, p.unitprice * o.units as orderamount, p.unitprice,
+# MAGIC   ((p.unitprice * o.units) * p.itemdiscount * 0.01) as discountamount,
+# MAGIC   o.billingaddress, o.units, o.remarks,
+# MAGIC   get_score(o.remarks) as sentiment_score
+# MAGIC FROM orders o
+# MAGIC INNER JOIN customers c on o.customer = c.customerid
+# MAGIC INNER JOIN products p on o.product = p.productid
+# MAGIC WHERE c.customerid IN (1,2,3,4,5)
+
+# COMMAND ----------
+
+statement = """SELECT o.orderid, o.orderdate, c.fullname, c.address, getCustomerType(c.credit) as customertype, c.status,
+  p.title as ProductTitle, p.unitprice * o.units as orderamount, p.unitprice,
+  ((p.unitprice * o.units) * p.itemdiscount * 0.01) as discountamount,
+  o.billingaddress, o.units, o.remarks,
+  get_score(o.remarks) as sentiment_score
+FROM orders o
+INNER JOIN customers c on o.customer = c.customerid
+INNER JOIN products p on o.product = p.productid"""
+
+results = spark.sql(statement)
+
+results.printSchema()
+
+# COMMAND ----------
+
+display(results)
+
+# COMMAND ----------
+
+results.write.parquet("/mnt/data/optimized-orders-store/data.parquet")
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC 
+# MAGIC CREATE DATABASE IF NOT EXISTS PracticeDB
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC 
+# MAGIC CREATE TABLE IF NOT EXISTS PracticeDB.ProcessedOrders
+# MAGIC USING PARQUET
+# MAGIC OPTIONS
+# MAGIC (
+# MAGIC   path "/mnt/data/optimized-orders-store/data.parquet"
+# MAGIC )
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC 
+# MAGIC SELECT orderid, sentiment_score
+# MAGIC FROM PracticeDB.ProcessedOrders
